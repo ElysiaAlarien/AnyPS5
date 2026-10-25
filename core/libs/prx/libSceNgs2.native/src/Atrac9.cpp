@@ -26,7 +26,6 @@ static constexpr std::size_t FACT_ATRAC9_SIZE = 12;
 static constexpr std::uint32_t MAX_SAMPLE_RATE = 192000;
 static constexpr std::uint32_t WAVEFORM_TYPE_PCM_FIRST = 0x10;
 static constexpr std::uint32_t WAVEFORM_TYPE_PCM_LAST = 0x1b;
-static constexpr std::uint32_t WAVEFORM_TYPE_VAG = 0x1c;
 static constexpr std::uint32_t VAG_FRAME_SAMPLES = 28;
 static constexpr std::uint32_t ATRAC9_FRAME_SAMPLES[16] = {0, 64, 0, 0, 128, 0, 0, 256, 0, 0, 0, 0, 0, 0, 0, 0};
 static constexpr std::uint32_t PCM_BYTES_PER_SAMPLE[] = {1, 1, 2, 2, 3, 3, 4, 4, 4, 4, 8, 8};
@@ -411,6 +410,7 @@ int APS5_VABI sceNgs2ParseWaveformData(const void* data, size_t data_size, Ngs2W
     *info = {};
     if (data == nullptr) return SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA;
     const auto* bytes = static_cast<const std::uint8_t*>(data);
+    if (data_size >= 4 && std::memcmp(bytes, "VAGp", 4) == 0) return Ngs2ParseHevag(bytes, data_size, *info);
     RiffChunks chunks;
     const int result = ReadChunks(data_size, [bytes](std::size_t at, std::size_t) { return bytes + at; }, chunks);
     if (result != SCE_NGS2_OK) return result;
@@ -436,8 +436,13 @@ int APS5_VABI sceNgs2ParseWaveformFile(const char* path, uint32_t offset, Ngs2Wa
         return static_cast<const std::uint8_t*>(piece.data());
     };
     RiffChunks chunks;
-    int result = ReadChunks(length, readBytes, chunks);
-    if (result == SCE_NGS2_OK) result = ParseWaveform(chunks, length, *info);
+    int result;
+    if (length >= 4 && std::memcmp(readBytes(0, 4), "VAGp", 4) == 0) {
+        result = length < 0x30 ? SCE_NGS2_ERROR_INVALID_WAVEFORM_DATA : Ngs2ParseHevag(readBytes(0, 0x30), length, *info);
+    } else {
+        result = ReadChunks(length, readBytes, chunks);
+        if (result == SCE_NGS2_OK) result = ParseWaveform(chunks, length, *info);
+    }
     if (result != SCE_NGS2_OK) return result;
     info->data_offset += offset;
     for (std::uint32_t i = 0; i < info->num_blocks; i++) info->block[i].data_offset += offset;
@@ -453,7 +458,7 @@ int APS5_VABI sceNgs2CalcWaveformBlock(const Ngs2WaveformFormat* format, uint32_
         *block = PcmBlock(type, format->num_channels, sample_pos, num_samples);
         return SCE_NGS2_OK;
     }
-    if (type == WAVEFORM_TYPE_VAG) {
+    if (type == SCE_NGS2_WAVEFORM_TYPE_VAG) {
         *block = VagBlock(format->num_channels, sample_pos, num_samples);
         return SCE_NGS2_OK;
     }
